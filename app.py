@@ -4,18 +4,17 @@ import PyPDF2
 import openai
 import os
 
-# Load API key (Streamlit secrets or env)
+# Load API key from Streamlit secrets or environment
 openai.api_key = st.secrets.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="BioMaint-AI", layout="wide")
-st.title("🩺 BioMaint-AI: Smart Biomedical Assistant + ChatGPT")
+st.title("🩺 BioMaint-AI: Biomedical Assistant (Smart + ChatGPT)")
 
 st.markdown("""
-Upload your equipment inventory and SOPs to:
-- 🔍 Track faulty equipment
-- ✅ Detect missing status
-- 📖 Search SOP/manual content
-- 🤖 Ask ChatGPT if logic fails
+Upload your inventory and SOPs to:
+- 🔍 Detect faulty and missing-status equipment
+- 📖 Lookup SOP content
+- 🧠 Ask questions with GPT fallback if needed
 """)
 
 # --------------------- File Upload ---------------------
@@ -33,8 +32,11 @@ if uploaded_file:
         else:
             df = pd.read_excel(uploaded_file)
 
-        df.columns = [col.strip().lower().replace(" ", "_") for col in df.columns]
+        # Normalize columns
+        df.columns = [str(col).strip().lower().replace(" ", "_") for col in df.columns]
+        df = df.dropna(how="all")  # remove empty rows
 
+        # Map column names if necessary
         column_map = {
             "equipment_name": "name_of_equipment",
             "device": "name_of_equipment",
@@ -49,6 +51,7 @@ if uploaded_file:
             if old in df.columns:
                 df.rename(columns={old: new}, inplace=True)
 
+        # Ensure required columns exist
         for col in ["name_of_equipment", "status", "department"]:
             if col not in df.columns:
                 df[col] = "No data"
@@ -74,7 +77,7 @@ if uploaded_file:
 
 # --------------------- Dashboard ---------------------
 if df is not None:
-    st.subheader("📊 Inventory Dashboard")
+    st.subheader("📊 Equipment Dashboard")
 
     total = len(df)
 
@@ -114,7 +117,6 @@ if uploaded_pdf:
 
 # --------------------- Question Answering ---------------------
 st.header("💬 Ask a Question")
-
 query = st.text_input("E.g. 'How many ECG machines are faulty?' or 'SOP for defibrillator'")
 
 if st.button("Get Answer"):
@@ -149,39 +151,42 @@ if st.button("Get Answer"):
                 st.dataframe(no_status)
                 handled = True
 
+        # ---------------- PDF Fallback ----------------
         if not handled and pdf_text:
-            st.subheader("📄 SOP Lookup in PDF")
             found = []
             for line in pdf_text.split('\n'):
                 if any(word in line.lower() for word in query_lower.split()):
                     found.append(line.strip())
-
             if found:
-                st.success("Found relevant SOP/line:")
+                st.success("📄 Found relevant SOP lines:")
                 st.write("\n\n".join(found[:10]))
                 handled = True
 
-        # ---------------- GPT Fallback ----------------
+        # ---------------- ChatGPT Fallback ----------------
         if not handled and openai.api_key:
+            st.subheader("🤖 Asking ChatGPT (Fallback)")
             try:
-                st.subheader("🤖 ChatGPT's Answer (Fallback)")
+                # Structured summary for GPT
+                inventory_summary = "\n".join(
+                    df[["name_of_equipment", "status", "department"]]
+                    .dropna()
+                    .astype(str)
+                    .head(20)
+                    .apply(lambda row: f"- {row['name_of_equipment']} | {row['status']} | {row['department']}", axis=1)
+                )
+
                 response = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "You are a biomedical engineer assistant. Use inventory and SOP data if provided."},
-                        {"role": "user", "content": f"Inventory:\n{df.to_csv(index=False)[:1500] if df is not None else ''}\n\nPDF SOP:\n{pdf_text[:1500]}\n\nQuestion:\n{query}"}
+                        {"role": "system", "content": "You are a biomedical assistant helping with inventory and SOPs."},
+                        {"role": "user", "content": f"Inventory:\n{inventory_summary}\n\nPDF:\n{pdf_text[:1500]}\n\nQuestion:\n{query}"}
                     ],
                     temperature=0.3,
                     max_tokens=300
                 )
-                answer = response['choices'][0]['message']['content'].strip()
                 st.success("ChatGPT says:")
-                st.write(answer)
-                handled = True
-
+                st.write(response['choices'][0]['message']['content'].strip())
             except Exception as e:
-                st.error(f"GPT Error: {e}")
-                st.info("Please check if your OpenAI API key is correct.")
-
+                st.error(f"OpenAI error: {e}")
         elif not handled:
-            st.info("No relevant data found in file or SOP.")
+            st.info("No relevant answer found. Please check your input.")
