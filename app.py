@@ -1,16 +1,21 @@
 import streamlit as st
 import pandas as pd
 import PyPDF2
+import openai
+import os
+
+# Load API key (Streamlit secrets or env)
+openai.api_key = st.secrets.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="BioMaint-AI", layout="wide")
-st.title("🩺 BioMaint-AI: Smart Biomedical Assistant (Free & Offline)")
+st.title("🩺 BioMaint-AI: Smart Biomedical Assistant + ChatGPT")
 
 st.markdown("""
 Upload your equipment inventory and SOPs to:
 - 🔍 Track faulty equipment
 - ✅ Detect missing status
 - 📖 Search SOP/manual content
-- ❓ Ask inventory or procedure questions — all without GPT or paid APIs
+- 🤖 Ask ChatGPT if logic fails
 """)
 
 # --------------------- File Upload ---------------------
@@ -154,8 +159,29 @@ if st.button("Get Answer"):
             if found:
                 st.success("Found relevant SOP/line:")
                 st.write("\n\n".join(found[:10]))
-            else:
-                st.warning("No relevant content found in the PDF.")
+                handled = True
+
+        # ---------------- GPT Fallback ----------------
+        if not handled and openai.api_key:
+            try:
+                st.subheader("🤖 ChatGPT's Answer (Fallback)")
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are a biomedical engineer assistant. Use inventory and SOP data if provided."},
+                        {"role": "user", "content": f"Inventory:\n{df.to_csv(index=False)[:1500] if df is not None else ''}\n\nPDF SOP:\n{pdf_text[:1500]}\n\nQuestion:\n{query}"}
+                    ],
+                    temperature=0.3,
+                    max_tokens=300
+                )
+                answer = response['choices'][0]['message']['content'].strip()
+                st.success("ChatGPT says:")
+                st.write(answer)
+                handled = True
+
+            except Exception as e:
+                st.error(f"GPT Error: {e}")
+                st.info("Please check if your OpenAI API key is correct.")
 
         elif not handled:
-            st.info("No relevant data found. Try uploading inventory or SOP.")
+            st.info("No relevant data found in file or SOP.")
