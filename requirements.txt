@@ -6,3 +6,5 @@ transformers>=4.30.0
 torch        # or torch-cpu if you prefer
 numpy
 xlsxwriter
+streamlit
+openpyxl
