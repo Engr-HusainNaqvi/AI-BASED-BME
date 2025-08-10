@@ -1,4 +1,4 @@
-streamlit>=1.20
+streamlit
 pandas
 PyPDF2
 sentence-transformers
